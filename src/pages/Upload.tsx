@@ -2,59 +2,23 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import {
-  Building2,
-  GraduationCap,
-  BookOpen,
-  UserCircle,
-  Upload as UploadIcon,
-  ArrowLeft,
-  ArrowRight,
-  Check,
-  FileText,
-  Loader2,
-} from 'lucide-react';
+import { usePdfUpload } from '@/hooks/usePdfUpload';
+import { ArrowLeft, ArrowRight, Check, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-const STEPS = [
-  { id: 1, title: 'College', icon: Building2 },
-  { id: 2, title: 'Academic', icon: GraduationCap },
-  { id: 3, title: 'Subject', icon: BookOpen },
-  { id: 4, title: 'Role', icon: UserCircle },
-  { id: 5, title: 'Upload', icon: UploadIcon },
-];
+// Import step components
+import { CollegeStep } from '@/components/upload/CollegeStep';
+import { AcademicStep } from '@/components/upload/AcademicStep';
+import { SubjectStep } from '@/components/upload/SubjectStep';
+import { RoleStep } from '@/components/upload/RoleStep';
+import { FileUploadStep } from '@/components/upload/FileUploadStep';
+import { UploadSuccess } from '@/components/upload/UploadSuccess';
+import { UPLOAD_STEPS } from '@/components/upload/constants';
 
-const BRANCHES = [
-  'Computer Science (CSE)',
-  'Electronics & Communication (ECE)',
-  'Mechanical Engineering (MECH)',
-  'Civil Engineering (CIVIL)',
-  'Electrical Engineering (EE)',
-  'Information Technology (IT)',
-  'Chemical Engineering (CHEM)',
-  'Biotechnology',
-  'Other',
-];
-
-const YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
-
-const ACADEMIC_YEARS = ['2024-2025', '2023-2024', '2022-2023', '2021-2022'];
-
-interface FormData {
+export interface UploadFormData {
   collegeName: string;
   collegeAddress: string;
   institutionDetails: string;
@@ -73,10 +37,25 @@ export default function Upload() {
   const { toast } = useToast();
   const { profile } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadResult, setUploadResult] = useState<{
+    pdfId: string;
+    fileUrl: string;
+    summary: string | null;
+    summaryGeneratedAt: string | null;
+  } | null>(null);
 
-  const [formData, setFormData] = useState<FormData>({
+  const {
+    upload,
+    stage,
+    uploadProgress,
+    extractProgress,
+    isExtracting,
+    isSummarizing,
+    error: uploadError,
+    reset: resetUpload,
+  } = usePdfUpload();
+
+  const [formData, setFormData] = useState<UploadFormData>({
     collegeName: profile?.college_name || '',
     collegeAddress: profile?.college_address || '',
     institutionDetails: '',
@@ -90,7 +69,7 @@ export default function Upload() {
     file: null,
   });
 
-  const updateFormData = (field: keyof FormData, value: string | File | null) => {
+  const updateFormData = (field: keyof UploadFormData, value: string | File | null) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -160,317 +139,86 @@ export default function Upload() {
       return;
     }
 
-    setIsUploading(true);
-    
-    // Simulate upload progress
-    const interval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 95) {
-          clearInterval(interval);
-          return prev;
-        }
-        return prev + 5;
+    try {
+      const result = await upload({
+        ...formData,
+        file: formData.file,
       });
-    }, 200);
 
-    // TODO: Implement actual file upload to Supabase Storage
-    // and save metadata to database
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    
-    clearInterval(interval);
-    setUploadProgress(100);
+      setUploadResult(result);
 
-    toast({
-      title: 'Upload successful!',
-      description: 'Your PDF has been uploaded. AI summary is being generated.',
-    });
-
-    setTimeout(() => {
-      navigate('/');
-    }, 1500);
+      toast({
+        title: 'Upload successful!',
+        description: result.summary 
+          ? 'Your PDF has been uploaded and summarized.'
+          : 'Your PDF has been uploaded. Summary will be generated later.',
+      });
+    } catch (err) {
+      toast({
+        title: 'Upload failed',
+        description: err instanceof Error ? err.message : 'Something went wrong',
+        variant: 'destructive',
+      });
+    }
   };
+
+  const isUploading = stage !== 'idle' && stage !== 'complete' && stage !== 'error';
+
+  // Show success screen with PDF viewer and summary
+  if (uploadResult) {
+    return (
+      <Layout>
+        <UploadSuccess
+          result={uploadResult}
+          fileName={formData.file?.name || 'Document'}
+          onUploadAnother={() => {
+            setUploadResult(null);
+            resetUpload();
+            setCurrentStep(1);
+            setFormData({
+              collegeName: profile?.college_name || '',
+              collegeAddress: profile?.college_address || '',
+              institutionDetails: '',
+              branch: '',
+              yearOfStudy: '',
+              academicYear: '',
+              subjectName: '',
+              chapter: '',
+              description: '',
+              uploadRole: profile?.role || 'student',
+              file: null,
+            });
+          }}
+          onGoHome={() => navigate('/')}
+        />
+      </Layout>
+    );
+  }
 
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
-        return (
-          <div className="space-y-6 animate-fade-in">
-            <div>
-              <h2 className="text-xl font-display font-semibold mb-2">College Information</h2>
-              <p className="text-muted-foreground">
-                Enter your institution details for proper classification.
-              </p>
-            </div>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="collegeName">College Name *</Label>
-                <Input
-                  id="collegeName"
-                  placeholder="e.g., MIT, Stanford University"
-                  value={formData.collegeName}
-                  onChange={(e) => updateFormData('collegeName', e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="collegeAddress">College Address *</Label>
-                <Input
-                  id="collegeAddress"
-                  placeholder="City, State, Country"
-                  value={formData.collegeAddress}
-                  onChange={(e) => updateFormData('collegeAddress', e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="institutionDetails">Additional Details (Optional)</Label>
-                <Textarea
-                  id="institutionDetails"
-                  placeholder="Any additional institution information..."
-                  value={formData.institutionDetails}
-                  onChange={(e) => updateFormData('institutionDetails', e.target.value)}
-                  rows={3}
-                />
-              </div>
-            </div>
-          </div>
-        );
-
+        return <CollegeStep formData={formData} updateFormData={updateFormData} />;
       case 2:
-        return (
-          <div className="space-y-6 animate-fade-in">
-            <div>
-              <h2 className="text-xl font-display font-semibold mb-2">Academic Classification</h2>
-              <p className="text-muted-foreground">
-                Select the academic details for this resource.
-              </p>
-            </div>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Branch / Stream *</Label>
-                <Select
-                  value={formData.branch}
-                  onValueChange={(value) => updateFormData('branch', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select branch" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {BRANCHES.map((branch) => (
-                      <SelectItem key={branch} value={branch}>
-                        {branch}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Year of Study *</Label>
-                <Select
-                  value={formData.yearOfStudy}
-                  onValueChange={(value) => updateFormData('yearOfStudy', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select year" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {YEARS.map((year) => (
-                      <SelectItem key={year} value={year}>
-                        {year}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Academic Year *</Label>
-                <Select
-                  value={formData.academicYear}
-                  onValueChange={(value) => updateFormData('academicYear', value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select academic year" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ACADEMIC_YEARS.map((year) => (
-                      <SelectItem key={year} value={year}>
-                        {year}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-        );
-
+        return <AcademicStep formData={formData} updateFormData={updateFormData} />;
       case 3:
-        return (
-          <div className="space-y-6 animate-fade-in">
-            <div>
-              <h2 className="text-xl font-display font-semibold mb-2">Subject Details</h2>
-              <p className="text-muted-foreground">
-                Provide information about the subject and topic.
-              </p>
-            </div>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="subjectName">Subject Name *</Label>
-                <Input
-                  id="subjectName"
-                  placeholder="e.g., Data Structures, Thermodynamics"
-                  value={formData.subjectName}
-                  onChange={(e) => updateFormData('subjectName', e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="chapter">Chapter / Unit / Topic *</Label>
-                <Input
-                  id="chapter"
-                  placeholder="e.g., Unit 3 - Binary Trees"
-                  value={formData.chapter}
-                  onChange={(e) => updateFormData('chapter', e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="description">Description (Optional)</Label>
-                <Textarea
-                  id="description"
-                  placeholder="Brief description of the content..."
-                  value={formData.description}
-                  onChange={(e) => updateFormData('description', e.target.value)}
-                  rows={3}
-                />
-              </div>
-            </div>
-          </div>
-        );
-
+        return <SubjectStep formData={formData} updateFormData={updateFormData} />;
       case 4:
-        return (
-          <div className="space-y-6 animate-fade-in">
-            <div>
-              <h2 className="text-xl font-display font-semibold mb-2">Upload Role</h2>
-              <p className="text-muted-foreground">
-                Select your role for this upload. This affects verification status.
-              </p>
-            </div>
-            <RadioGroup
-              value={formData.uploadRole}
-              onValueChange={(value) => updateFormData('uploadRole', value as 'student' | 'lecturer' | 'owner')}
-              className="space-y-3"
-            >
-              <div className="flex items-start space-x-3 p-4 rounded-xl border border-border hover:border-accent/50 transition-colors cursor-pointer">
-                <RadioGroupItem value="student" id="student" className="mt-1" />
-                <div className="flex-1">
-                  <Label htmlFor="student" className="cursor-pointer font-medium">
-                    Student
-                  </Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Upload as a student resource. Won't receive verified badge.
-                  </p>
-                </div>
-                <span className="role-badge role-badge-student">Student</span>
-              </div>
-              <div className="flex items-start space-x-3 p-4 rounded-xl border border-border hover:border-accent/50 transition-colors cursor-pointer">
-                <RadioGroupItem value="lecturer" id="lecturer" className="mt-1" />
-                <div className="flex-1">
-                  <Label htmlFor="lecturer" className="cursor-pointer font-medium">
-                    Lecturer
-                  </Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Upload as a lecturer. Content will be automatically verified.
-                  </p>
-                </div>
-                <span className="role-badge role-badge-lecturer">Verified</span>
-              </div>
-              <div className="flex items-start space-x-3 p-4 rounded-xl border border-border hover:border-accent/50 transition-colors cursor-pointer">
-                <RadioGroupItem value="owner" id="owner" className="mt-1" />
-                <div className="flex-1">
-                  <Label htmlFor="owner" className="cursor-pointer font-medium">
-                    Owner / Admin
-                  </Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Upload as institution owner. Content marked as official.
-                  </p>
-                </div>
-                <span className="role-badge role-badge-owner">Official</span>
-              </div>
-            </RadioGroup>
-          </div>
-        );
-
+        return <RoleStep formData={formData} updateFormData={updateFormData} />;
       case 5:
         return (
-          <div className="space-y-6 animate-fade-in">
-            <div>
-              <h2 className="text-xl font-display font-semibold mb-2">Upload PDF</h2>
-              <p className="text-muted-foreground">
-                Select your PDF file. Maximum size: 50MB.
-              </p>
-            </div>
-            
-            {!isUploading ? (
-              <div className="space-y-4">
-                <label
-                  htmlFor="file-upload"
-                  className={cn(
-                    "flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-2xl cursor-pointer transition-all",
-                    formData.file
-                      ? "border-accent bg-accent/5"
-                      : "border-border hover:border-accent/50 hover:bg-muted/50"
-                  )}
-                >
-                  {formData.file ? (
-                    <div className="flex flex-col items-center">
-                      <div className="p-3 rounded-xl bg-accent/10 mb-3">
-                        <FileText className="h-8 w-8 text-accent" />
-                      </div>
-                      <p className="font-medium text-foreground">{formData.file.name}</p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {(formData.file.size / (1024 * 1024)).toFixed(2)} MB
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center">
-                      <div className="p-3 rounded-xl bg-muted mb-3">
-                        <UploadIcon className="h-8 w-8 text-muted-foreground" />
-                      </div>
-                      <p className="font-medium">Click to upload or drag and drop</p>
-                      <p className="text-sm text-muted-foreground mt-1">PDF only (max 50MB)</p>
-                    </div>
-                  )}
-                  <input
-                    id="file-upload"
-                    type="file"
-                    accept=".pdf"
-                    className="hidden"
-                    onChange={handleFileChange}
-                  />
-                </label>
-
-                {formData.file && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => updateFormData('file', null)}
-                  >
-                    Remove file
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-4 py-8">
-                <div className="flex flex-col items-center">
-                  <Loader2 className="h-12 w-12 text-accent animate-spin mb-4" />
-                  <p className="font-medium mb-2">Uploading your PDF...</p>
-                  <p className="text-sm text-muted-foreground">Please wait while we process your file</p>
-                </div>
-                <Progress value={uploadProgress} className="h-2" />
-                <p className="text-center text-sm text-muted-foreground">{uploadProgress}% complete</p>
-              </div>
-            )}
-          </div>
+          <FileUploadStep
+            formData={formData}
+            updateFormData={updateFormData}
+            handleFileChange={handleFileChange}
+            isUploading={isUploading}
+            stage={stage}
+            uploadProgress={uploadProgress}
+            extractProgress={extractProgress}
+            isExtracting={isExtracting}
+            isSummarizing={isSummarizing}
+          />
         );
-
       default:
         return null;
     }
@@ -482,7 +230,7 @@ export default function Upload() {
         {/* Progress Steps */}
         <div className="mb-10">
           <div className="flex items-center justify-between">
-            {STEPS.map((step, index) => (
+            {UPLOAD_STEPS.map((step, index) => (
               <div key={step.id} className="flex items-center">
                 <div className="flex flex-col items-center">
                   <div
@@ -508,7 +256,7 @@ export default function Upload() {
                     {step.title}
                   </span>
                 </div>
-                {index < STEPS.length - 1 && (
+                {index < UPLOAD_STEPS.length - 1 && (
                   <div
                     className={cn(
                       "h-0.5 w-8 sm:w-16 lg:w-24 mx-2",
@@ -550,11 +298,14 @@ export default function Upload() {
                 {isUploading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Uploading...
+                    {stage === 'extracting' && 'Extracting text...'}
+                    {stage === 'uploading' && 'Uploading...'}
+                    {stage === 'summarizing' && 'Generating summary...'}
+                    {stage === 'saving' && 'Saving...'}
                   </>
                 ) : (
                   <>
-                    <UploadIcon className="mr-2 h-4 w-4" />
+                    <Check className="mr-2 h-4 w-4" />
                     Upload PDF
                   </>
                 )}

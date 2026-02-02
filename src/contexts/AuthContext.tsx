@@ -1,10 +1,17 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, Session } from '@supabase/supabase-js';
-import { supabase } from '@/integrations/supabase/client';
+import {
+  User,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut as firebaseSignOut,
+  updateProfile
+} from 'firebase/auth';
+import { auth } from '@/integrations/firebase/firebase';
 
 interface Profile {
   id: string;
-  email: string;
+  email: string | null;
   full_name: string | null;
   avatar_url: string | null;
   role: 'student' | 'lecturer' | 'owner';
@@ -17,7 +24,6 @@ interface Profile {
 interface AuthContextType {
   user: User | null;
   profile: Profile | null;
-  session: Session | null;
   isLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
@@ -30,108 +36,81 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchProfile = async (userId: string): Promise<Profile | null> => {
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
+  // Helper to map Firebase User to our Profile interface
+  const mapUserToProfile = (firebaseUser: User): Profile => {
+    return {
+      id: firebaseUser.uid,
+      email: firebaseUser.email,
+      full_name: firebaseUser.displayName,
+      avatar_url: firebaseUser.photoURL,
+      // Defaulting to student as we don't have a database profile yet
+      role: 'student',
+      college_name: null,
+      college_address: null,
+      points: 0,
+      created_at: firebaseUser.metadata.creationTime || new Date().toISOString(),
+    };
+  };
 
-      if (error) {
-        console.error('Error fetching profile:', error);
-        return null;
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setProfile(mapUserToProfile(currentUser));
+      } else {
+        setProfile(null);
       }
-      
-      if (!data) return null;
-      
-      return {
-        id: data.id,
-        email: data.email,
-        full_name: data.full_name,
-        avatar_url: data.avatar_url,
-        role: data.role as 'student' | 'lecturer' | 'owner',
-        college_name: data.college_name,
-        college_address: data.college_address,
-        points: data.points ?? 0,
-        created_at: data.created_at,
-      };
-    } catch (err) {
-      console.error('Error in fetchProfile:', err);
-      return null;
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const signIn = async (email: string, password: string) => {
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      return { error: null };
+    } catch (error) {
+      console.error("Error signing in:", error);
+      return { error: error as Error };
+    }
+  };
+
+  const signUp = async (email: string, password: string, fullName: string) => {
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      // Update display name immediately
+      await updateProfile(userCredential.user, {
+        displayName: fullName
+      });
+
+      // Force update locally to show the name right away
+      setUser({ ...userCredential.user, displayName: fullName });
+      setProfile(mapUserToProfile({ ...userCredential.user, displayName: fullName }));
+
+      return { error: null };
+    } catch (error) {
+      console.error("Error signing up:", error);
+      return { error: error as Error };
+    }
+  };
+
+  const signOut = async () => {
+    try {
+      await firebaseSignOut(auth);
+    } catch (error) {
+      console.error("Error signing out:", error);
     }
   };
 
   const refreshProfile = async () => {
-    if (user) {
-      const profileData = await fetchProfile(user.id);
-      setProfile(profileData);
+    if (auth.currentUser) {
+      await auth.currentUser.reload();
+      setUser(auth.currentUser);
+      setProfile(mapUserToProfile(auth.currentUser));
     }
-  };
-
-  useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, currentSession) => {
-        setSession(currentSession);
-        setUser(currentSession?.user ?? null);
-
-        if (currentSession?.user) {
-          setTimeout(async () => {
-            const profileData = await fetchProfile(currentSession.user.id);
-            setProfile(profileData);
-            setIsLoading(false);
-          }, 0);
-        } else {
-          setProfile(null);
-          setIsLoading(false);
-        }
-      }
-    );
-
-    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
-      
-      if (currentSession?.user) {
-        fetchProfile(currentSession.user.id).then((profileData) => {
-          setProfile(profileData);
-          setIsLoading(false);
-        });
-      } else {
-        setIsLoading(false);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error as Error | null };
-  };
-
-  const signUp = async (email: string, password: string, fullName: string) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: window.location.origin,
-        data: {
-          full_name: fullName,
-        },
-      },
-    });
-    return { error: error as Error | null };
-  };
-
-  const signOut = async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
-    setSession(null);
   };
 
   return (
@@ -139,7 +118,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         profile,
-        session,
         isLoading,
         signIn,
         signUp,
@@ -159,3 +137,4 @@ export function useAuth() {
   }
   return context;
 }
+

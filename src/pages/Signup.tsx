@@ -12,7 +12,7 @@ export default function Signup() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
+  // Removed isSuccess state and verification UI
   const { signUp } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -33,30 +33,12 @@ export default function Signup() {
       return;
     }
 
-    setIsSuccess(true);
+    toast({
+      title: 'Welcome!',
+      description: 'Your account has been created successfully.',
+    });
+    navigate('/');
   };
-
-  if (isSuccess) {
-    return (
-      <div className="min-h-screen flex items-center justify-center px-6 bg-background">
-        <div className="w-full max-w-md text-center">
-          <div className="mb-6 flex justify-center">
-            <div className="h-16 w-16 rounded-full bg-success/10 flex items-center justify-center">
-              <CheckCircle2 className="h-8 w-8 text-success" />
-            </div>
-          </div>
-          <h2 className="text-2xl font-display font-bold mb-3">Check your email</h2>
-          <p className="text-muted-foreground mb-6">
-            We've sent a confirmation link to <strong>{email}</strong>. 
-            Click the link to verify your account.
-          </p>
-          <Button variant="outline" onClick={() => navigate('/login')}>
-            Back to Login
-          </Button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex">
@@ -76,7 +58,7 @@ export default function Signup() {
             Community
           </h1>
           <p className="text-lg text-white/80 max-w-md leading-relaxed">
-            Share knowledge, earn points, and climb the leaderboard. 
+            Share knowledge, earn points, and climb the leaderboard.
             Help others learn while building your academic reputation.
           </p>
           <div className="mt-12 space-y-4">
